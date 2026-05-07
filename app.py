@@ -1,7 +1,7 @@
 import streamlit as st
 
 # =====================================================
-# MUST BE FIRST STREAMLIT COMMAND (FIXED ERROR)
+# MUST BE FIRST STREAMLIT COMMAND
 # =====================================================
 st.set_page_config(
     page_title="YOLO Detection + Twilio Alerts",
@@ -26,20 +26,27 @@ def load_model():
 model = load_model()
 
 # =====================================================
-# TWILIO (USING SECRETS - SAFE WAY)
+# TWILIO SAFE CONFIG (NO CRASH IF SECRETS MISSING)
 # =====================================================
-account_sid = st.secrets["TWILIO_ACCOUNT_SID"]
-auth_token = st.secrets["TWILIO_AUTH_TOKEN"]
+try:
+    account_sid = st.secrets["TWILIO_ACCOUNT_SID"]
+    auth_token = st.secrets["TWILIO_AUTH_TOKEN"]
+    TWILIO_PHONE_NUMBER = st.secrets["TWILIO_PHONE_NUMBER"]
+    YOUR_PHONE_NUMBER = st.secrets["YOUR_PHONE_NUMBER"]
 
-TWILIO_PHONE_NUMBER = st.secrets["TWILIO_PHONE_NUMBER"]
-YOUR_PHONE_NUMBER = st.secrets["YOUR_PHONE_NUMBER"]
+    client = Client(account_sid, auth_token)
+    twilio_ready = True
 
-client = Client(account_sid, auth_token)
+except Exception:
+    twilio_ready = False
+    client = None
+    TWILIO_PHONE_NUMBER = None
+    YOUR_PHONE_NUMBER = None
 
 # =====================================================
 # UI
 # =====================================================
-st.title("🎥 Live Object Detection & Tracking")
+st.title("🎥 Live Object Detection & Tracking + Twilio SMS")
 
 st.sidebar.header("⚙️ Settings")
 
@@ -52,6 +59,11 @@ target_object = st.sidebar.selectbox(
     ["person", "car", "dog", "cat", "cell phone"]
 )
 
+st.sidebar.warning(
+    "⚠️ Twilio Status: "
+    + ("READY" if twilio_ready else "NOT CONFIGURED")
+)
+
 # =====================================================
 # VIDEO PROCESSOR
 # =====================================================
@@ -61,7 +73,15 @@ class VideoProcessor(VideoTransformerBase):
         self.prev_time = time.time()
         self.last_alert_time = 0
 
+    # -------------------------------
+    # SMS FUNCTION
+    # -------------------------------
     def send_sms(self, label):
+
+        if not twilio_ready:
+            print("Twilio not configured")
+            return
+
         try:
             message = client.messages.create(
                 body=f"⚠️ ALERT: {label} detected!",
@@ -73,11 +93,13 @@ class VideoProcessor(VideoTransformerBase):
         except Exception as e:
             print("TWILIO ERROR:", e)
 
-    def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
+    # -------------------------------
+    # FRAME PROCESSING
+    # -------------------------------
+    def recv(self, frame: av.VideoFrame):
 
         img = frame.to_ndarray(format="bgr24")
 
-        # YOLO TRACKING
         results = model.track(
             img,
             persist=True,
@@ -109,12 +131,11 @@ class VideoProcessor(VideoTransformerBase):
 
                     class_id = int(classes[i])
                     label = model.names[class_id]
-
                     track_id = int(ids[i]) if ids is not None else -1
 
-                    # =====================================
-                    # TWILIO ALERT LOGIC
-                    # =====================================
+                    # -------------------------
+                    # SMS LOGIC (ANTI-SPAM)
+                    # -------------------------
                     now = time.time()
 
                     if (
@@ -136,7 +157,12 @@ class VideoProcessor(VideoTransformerBase):
                         )
 
                     if show_labels:
-                        text = f"{label} ID:{track_id}" if track_id >= 0 else label
+                        text = (
+                            f"{label} ID:{track_id}"
+                            if track_id >= 0
+                            else label
+                        )
+
                         cv2.putText(
                             annotated,
                             text,
@@ -147,8 +173,11 @@ class VideoProcessor(VideoTransformerBase):
                             2,
                         )
 
+        # -------------------------------
         # FPS
+        # -------------------------------
         if show_fps:
+
             now = time.time()
             fps = 1 / (now - self.prev_time)
             self.prev_time = now
@@ -169,16 +198,19 @@ class VideoProcessor(VideoTransformerBase):
         )
 
 # =====================================================
-# WEBRTC STREAM
+# WEBCAM STREAM
 # =====================================================
 webrtc_streamer(
     key="yolo-clean",
+
     video_processor_factory=VideoProcessor,
+
     rtc_configuration={
         "iceServers": [
             {"urls": ["stun:stun.l.google.com:19302"]}
         ]
     },
+
     media_stream_constraints={
         "video": {
             "width": 640,
@@ -187,5 +219,6 @@ webrtc_streamer(
         },
         "audio": False,
     },
+
     async_processing=True,
 )
