@@ -1,4 +1,4 @@
-mport streamlit as st 
+import streamlit as st 
 from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
 from ultralytics import YOLO
 import av
