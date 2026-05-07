@@ -30,6 +30,7 @@ py -m streamlit run app.py
 
 🔗 Live Demo
 Github
+https://github.com/dindorcanabano-png/DETECT_OBJ
 
 Streamlit
 https://detectobj-jrs79m4xcrdnixp6vspagv.streamlit.app/
