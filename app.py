@@ -15,18 +15,18 @@ st.set_page_config(
     layout="wide"
 )
 
-# =====================================================
-# LOAD MODEL
-# =====================================================
+# -------------------------------
+# Load model once
+# -------------------------------
 @st.cache_resource
 def load_model():
     return YOLO("yolov8n.pt")
 
 model = load_model()
 
-# =====================================================
+# -------------------------------
 # TWILIO
-# =====================================================
+# -------------------------------
 account_sid = st.secrets["TWILIO_ACCOUNT_SID"]
 auth_token = st.secrets["TWILIO_AUTH_TOKEN"]
 
@@ -54,9 +54,9 @@ show_fps = st.sidebar.checkbox(
     True
 )
 
-# ALERT OBJECT
+# EXTRA SETTINGS (DUGANG LANG)
 target_object = st.sidebar.selectbox(
-    "📲 Alert Object",
+    "📲 Send SMS Alert When Detecting:",
     [
         "person",
         "car",
@@ -66,9 +66,16 @@ target_object = st.sidebar.selectbox(
     ]
 )
 
-# =====================================================
-# VIDEO PROCESSOR
-# =====================================================
+confidence_level = st.sidebar.slider(
+    "Confidence",
+    0.01,
+    1.0,
+    0.15
+)
+
+# -------------------------------
+# Video Processor
+# -------------------------------
 class VideoProcessor(VideoTransformerBase):
 
     def __init__(self):
@@ -94,18 +101,15 @@ class VideoProcessor(VideoTransformerBase):
 
             print("TWILIO ERROR:", e)
 
-    # =================================================
-    # VIDEO FRAME
-    # =================================================
-    def recv(self, frame: av.VideoFrame):
+    def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
 
         img = frame.to_ndarray(format="bgr24")
 
-        # YOLO TRACKING
+        # YOLO tracking (NO FILTERS, NO LIMITS)
         results = model.track(
             img,
             persist=True,
-            conf=0.15,
+            conf=confidence_level,
             iou=0.5,
             verbose=False
         )
@@ -116,10 +120,7 @@ class VideoProcessor(VideoTransformerBase):
 
             result = results[0]
 
-            if (
-                result.boxes is not None
-                and len(result.boxes) > 0
-            ):
+            if result.boxes is not None and len(result.boxes) > 0:
 
                 boxes = result.boxes.xyxy.cpu().numpy()
 
@@ -139,15 +140,14 @@ class VideoProcessor(VideoTransformerBase):
 
                     label = model.names[class_id]
 
-                    track_id = (
-                        int(ids[i])
-                        if ids is not None
-                        else -1
-                    )
+                    track_id = int(ids[i]) if ids is not None else -1
 
-                    # =====================================
+                    # Always GREEN (no wrong logic)
+                    color = (0, 255, 0)
+
+                    # =========================================
                     # SEND SMS ALERT
-                    # =====================================
+                    # =========================================
                     current_time = time.time()
 
                     if (
@@ -159,12 +159,7 @@ class VideoProcessor(VideoTransformerBase):
 
                         self.last_alert = current_time
 
-                    # BOX COLOR
-                    color = (0, 255, 0)
-
-                    # DRAW BOX
                     if show_boxes:
-
                         cv2.rectangle(
                             annotated,
                             (x1, y1),
@@ -173,7 +168,6 @@ class VideoProcessor(VideoTransformerBase):
                             2
                         )
 
-                    # DRAW LABEL
                     if show_labels:
 
                         text = (
@@ -192,9 +186,7 @@ class VideoProcessor(VideoTransformerBase):
                             2,
                         )
 
-        # =================================================
         # FPS
-        # =================================================
         if show_fps:
 
             curr = time.time()
@@ -218,9 +210,9 @@ class VideoProcessor(VideoTransformerBase):
             format="bgr24"
         )
 
-# =====================================================
-# WEBRTC STREAM
-# =====================================================
+# -------------------------------
+# WEBRTC
+# -------------------------------
 webrtc_streamer(
     key="yolo-clean",
 
