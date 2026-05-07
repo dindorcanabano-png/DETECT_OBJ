@@ -1,5 +1,5 @@
 import streamlit as st
-from streamlit_webrtc import webrtc_streamer, VideoProcessorBase  # FIX 1
+from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
 from ultralytics import YOLO
 from twilio.rest import Client
 import av
@@ -39,8 +39,6 @@ st.title("🎥 Live Object Detection & Tracking")
 
 st.sidebar.header("⚙️ Settings")
 
-show_boxes = st.sidebar.checkbox("Show Bounding Boxes", True)
-show_labels = st.sidebar.checkbox("Show Labels", True)
 show_fps = st.sidebar.checkbox("Show FPS", True)
 
 target_object = st.sidebar.selectbox(
@@ -51,7 +49,7 @@ target_object = st.sidebar.selectbox(
 # =====================================================
 # VIDEO PROCESSOR
 # =====================================================
-class VideoProcessor(VideoProcessorBase):  # FIX 2
+class VideoProcessor(VideoTransformerBase):
 
     def __init__(self):
         self.prev_time = time.time()
@@ -70,69 +68,37 @@ class VideoProcessor(VideoProcessorBase):  # FIX 2
 
     def recv(self, frame: av.VideoFrame):
 
-        # FIX 3: allow access to sidebar variables
-        global show_boxes, show_labels, show_fps, target_object
-
         img = frame.to_ndarray(format="bgr24")
 
-        results = model.track(
-            img,
-            persist=True,
-            conf=0.15,
-            iou=0.5,
-            verbose=False
-        )
+        # =================================================
+        # YOLO FIXED (IMPORTANT PART)
+        # =================================================
+        results = model(img, conf=0.25, verbose=False)
+        result = results[0]
 
-        annotated = img.copy()
+        annotated = result.plot()
 
-        if results and len(results) > 0:
-            result = results[0]
+        # =================================================
+        # OPTIONAL ALERT SYSTEM
+        # =================================================
+        if result.boxes is not None and len(result.boxes) > 0:
 
-            if result.boxes is not None and len(result.boxes) > 0:
+            classes = result.boxes.cls.cpu().numpy()
 
-                boxes = result.boxes.xyxy.cpu().numpy()
-                classes = result.boxes.cls.cpu().numpy()
+            for i in range(len(classes)):
 
-                ids = (
-                    result.boxes.id.cpu().numpy()
-                    if result.boxes.id is not None
-                    else None
-                )
+                class_id = int(classes[i])
+                label = model.names[class_id]
 
-                for i, box in enumerate(boxes):
+                current_time = time.time()
 
-                    x1, y1, x2, y2 = map(int, box)
-                    class_id = int(classes[i])
-                    label = model.names[class_id]
+                if label == target_object and current_time - self.last_alert > 15:
+                    self.send_sms(label)
+                    self.last_alert = current_time
 
-                    track_id = int(ids[i]) if ids is not None else -1
-
-                    # ALERT
-                    current_time = time.time()
-                    if label == target_object and current_time - self.last_alert > 15:
-                        self.send_sms(label)
-                        self.last_alert = current_time
-
-                    color = (0, 255, 0)
-
-                    # BOX
-                    if show_boxes:
-                        cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
-
-                    # LABEL
-                    if show_labels:
-                        text = f"{label} ID:{track_id}" if track_id >= 0 else label
-                        cv2.putText(
-                            annotated,
-                            text,
-                            (x1, y1 - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.6,
-                            color,
-                            2,
-                        )
-
+        # =================================================
         # FPS
+        # =================================================
         if show_fps:
             curr = time.time()
             fps = 1 / (curr - self.prev_time)
