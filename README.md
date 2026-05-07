@@ -25,8 +25,8 @@ Streamlit
 Streamlit-webrtc
 
 - How to Run
-pip install -r requirements.txt
 py -m streamlit run app.py
+/for Python 3.10
 
 🔗 Live Demo
 Github
@@ -35,7 +35,5 @@ https://github.com/dindorcanabano-png/DETECT_OBJ
 Streamlit
 https://detectobj-jrs79m4xcrdnixp6vspagv.streamlit.app/
 
-
-
-streamlit link
-https://detectobj-jrs79m4xcrdnixp6vspagv.streamlit.app/
+Documents
+https://1drv.ms/w/c/e55fbfb0adbd56f3/IQCHuBukVUMSTIpiXMm_YrwYAeoMP6wFl4eUEjE5I2bZ6rg?e=Xm039H
