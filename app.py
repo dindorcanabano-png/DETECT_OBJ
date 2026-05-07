@@ -4,19 +4,10 @@ from ultralytics import YOLO
 from twilio.rest import Client
 import av
 import cv2
-import numpy as np
 import time
 
-# =====================================================
-# PAGE CONFIG
-# =====================================================
-st.set_page_config(
-    page_title="YOLO Detection + Twilio Alerts",
-    layout="wide"
-)
-
 # -------------------------------
-# Load model once
+# LOAD MODEL
 # -------------------------------
 @st.cache_resource
 def load_model():
@@ -31,11 +22,17 @@ account_sid = st.secrets["TWILIO_ACCOUNT_SID"]
 auth_token = st.secrets["TWILIO_AUTH_TOKEN"]
 
 client = Client(account_sid, auth_token)
+token = client.tokens.create()
 
-# =====================================================
+# -------------------------------
 # UI
-# =====================================================
-st.title("🎥 Live Object Detection & Tracking")
+# -------------------------------
+st.set_page_config(
+    page_title="Live Object Detection",
+    layout="wide"
+)
+
+st.title("🎥 Live Object Detection")
 
 st.sidebar.header("⚙️ Settings")
 
@@ -54,63 +51,29 @@ show_fps = st.sidebar.checkbox(
     True
 )
 
-# EXTRA SETTINGS (DUGANG LANG)
-target_object = st.sidebar.selectbox(
-    "📲 Send SMS Alert When Detecting:",
-    [
-        "person",
-        "car",
-        "dog",
-        "cat",
-        "cell phone"
-    ]
-)
-
-confidence_level = st.sidebar.slider(
+confidence = st.sidebar.slider(
     "Confidence",
-    0.01,
-    1.0,
-    0.15
+    0.1,
+    0.9,
+    0.25
 )
 
 # -------------------------------
-# Video Processor
+# VIDEO PROCESSOR
 # -------------------------------
 class VideoProcessor(VideoTransformerBase):
 
     def __init__(self):
         self.prev_time = time.time()
-        self.last_alert = 0
-
-    # =================================================
-    # SEND SMS
-    # =================================================
-    def send_sms(self, detected_object):
-
-        try:
-
-            message = client.messages.create(
-                body=f"⚠️ ALERT: {detected_object} detected!",
-                from_=st.secrets["TWILIO_PHONE_NUMBER"],
-                to=st.secrets["YOUR_PHONE_NUMBER"]
-            )
-
-            print("SMS SENT:", message.sid)
-
-        except Exception as e:
-
-            print("TWILIO ERROR:", e)
 
     def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
 
         img = frame.to_ndarray(format="bgr24")
 
-        # YOLO tracking (NO FILTERS, NO LIMITS)
-        results = model.track(
+        # YOLO DETECTION
+        results = model.predict(
             img,
-            persist=True,
-            conf=confidence_level,
-            iou=0.5,
+            conf=confidence,
             verbose=False
         )
 
@@ -120,46 +83,27 @@ class VideoProcessor(VideoTransformerBase):
 
             result = results[0]
 
-            if result.boxes is not None and len(result.boxes) > 0:
+            if result.boxes is not None:
 
                 boxes = result.boxes.xyxy.cpu().numpy()
-
                 classes = result.boxes.cls.cpu().numpy()
+                scores = result.boxes.conf.cpu().numpy()
 
-                ids = (
-                    result.boxes.id.cpu().numpy()
-                    if result.boxes.id is not None
-                    else None
-                )
-
-                for i, box in enumerate(boxes):
+                for box, cls_id, score in zip(
+                    boxes,
+                    classes,
+                    scores
+                ):
 
                     x1, y1, x2, y2 = map(int, box)
 
-                    class_id = int(classes[i])
+                    label = model.names[int(cls_id)]
 
-                    label = model.names[class_id]
-
-                    track_id = int(ids[i]) if ids is not None else -1
-
-                    # Always GREEN (no wrong logic)
                     color = (0, 255, 0)
 
-                    # =========================================
-                    # SEND SMS ALERT
-                    # =========================================
-                    current_time = time.time()
-
-                    if (
-                        label == target_object
-                        and current_time - self.last_alert > 15
-                    ):
-
-                        self.send_sms(label)
-
-                        self.last_alert = current_time
-
+                    # BOX
                     if show_boxes:
+
                         cv2.rectangle(
                             annotated,
                             (x1, y1),
@@ -168,13 +112,10 @@ class VideoProcessor(VideoTransformerBase):
                             2
                         )
 
+                    # LABEL
                     if show_labels:
 
-                        text = (
-                            f"{label} ID:{track_id}"
-                            if track_id >= 0
-                            else label
-                        )
+                        text = f"{label} {score:.2f}"
 
                         cv2.putText(
                             annotated,
@@ -211,21 +152,15 @@ class VideoProcessor(VideoTransformerBase):
         )
 
 # -------------------------------
-# WEBRTC
+# WEBRTC STREAM
 # -------------------------------
 webrtc_streamer(
-    key="yolo-clean",
+    key="object-detect",
 
     video_processor_factory=VideoProcessor,
 
     rtc_configuration={
-        "iceServers": [
-            {
-                "urls": [
-                    "stun:stun.l.google.com:19302"
-                ]
-            }
-        ]
+        "iceServers": token.ice_servers
     },
 
     media_stream_constraints={
