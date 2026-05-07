@@ -8,19 +8,7 @@ import numpy as np
 import time
 
 # -------------------------------
-# TWILIO SETTINGS
-# -------------------------------
-# Get these from your Twilio account
-# https://www.twilio.com/console
-TWILIO_SID = "YOUR_TWILIO_ACCOUNT_SID"
-TWILIO_AUTH_TOKEN = "YOUR_TWILIO_AUTH_TOKEN"
-TWILIO_PHONE = "+1234567890"   # Twilio number
-TO_PHONE = "+639XXXXXXXXX"     # Your number
-
-client = Client(TWILIO_SID, TWILIO_AUTH_TOKEN)
-
-# -------------------------------
-# Load YOLO model once
+# Load model once
 # -------------------------------
 @st.cache_resource
 def load_model():
@@ -29,11 +17,18 @@ def load_model():
 model = load_model()
 
 # -------------------------------
-# Streamlit UI
+# TWILIO
 # -------------------------------
-st.set_page_config(page_title="YOLO Detection + Twilio Alerts")
+account_sid = st.secrets["TWILIO_ACCOUNT_SID"]
+auth_token = st.secrets["TWILIO_AUTH_TOKEN"]
 
-st.title("🎥 Live Object Detection & Tracking with SMS Alert")
+client = Client(account_sid, auth_token)
+token = client.tokens.create()
+
+# -------------------------------
+# UI
+# -------------------------------
+st.title("🎥 Live Object Detection & Tracking")
 
 st.sidebar.header("⚙️ Settings")
 
@@ -41,37 +36,19 @@ show_boxes = st.sidebar.checkbox("Show Bounding Boxes", True)
 show_labels = st.sidebar.checkbox("Show Labels", True)
 show_fps = st.sidebar.checkbox("Show FPS", True)
 
-# Choose object to alert
-target_object = st.sidebar.selectbox(
-    "📢 Send SMS when detected:",
-    ["person", "cell phone", "car", "dog", "cat"]
-)
-
 # -------------------------------
 # Video Processor
 # -------------------------------
 class VideoProcessor(VideoTransformerBase):
+
     def __init__(self):
         self.prev_time = time.time()
-        self.last_alert_time = 0
-
-    def send_sms_alert(self, detected_object):
-        try:
-            message = client.messages.create(
-                body=f"⚠️ ALERT: {detected_object} detected by YOLO Camera!",
-                from_=TWILIO_PHONE,
-                to=TO_PHONE
-            )
-            print("SMS Sent:", message.sid)
-
-        except Exception as e:
-            print("Twilio Error:", e)
 
     def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
 
         img = frame.to_ndarray(format="bgr24")
 
-        # YOLO tracking
+        # YOLO Tracking
         results = model.track(
             img,
             persist=True,
@@ -90,7 +67,12 @@ class VideoProcessor(VideoTransformerBase):
 
                 boxes = result.boxes.xyxy.cpu().numpy()
                 classes = result.boxes.cls.cpu().numpy()
-                ids = result.boxes.id.cpu().numpy() if result.boxes.id is not None else None
+
+                ids = (
+                    result.boxes.id.cpu().numpy()
+                    if result.boxes.id is not None
+                    else None
+                )
 
                 for i, box in enumerate(boxes):
 
@@ -98,23 +80,11 @@ class VideoProcessor(VideoTransformerBase):
 
                     class_id = int(classes[i])
                     label = model.names[class_id]
+
                     track_id = int(ids[i]) if ids is not None else -1
-
-                    # -------------------------------
-                    # SEND TWILIO ALERT
-                    # -------------------------------
-                    current_time = time.time()
-
-                    if (
-                        label == target_object
-                        and current_time - self.last_alert_time > 15
-                    ):
-                        self.send_sms_alert(label)
-                        self.last_alert_time = current_time
 
                     color = (0, 255, 0)
 
-                    # Draw box
                     if show_boxes:
                         cv2.rectangle(
                             annotated,
@@ -124,9 +94,13 @@ class VideoProcessor(VideoTransformerBase):
                             2
                         )
 
-                    # Draw label
                     if show_labels:
-                        text = f"{label} ID:{track_id}" if track_id >= 0 else label
+
+                        text = (
+                            f"{label} ID:{track_id}"
+                            if track_id >= 0
+                            else label
+                        )
 
                         cv2.putText(
                             annotated,
@@ -138,9 +112,7 @@ class VideoProcessor(VideoTransformerBase):
                             2,
                         )
 
-        # -------------------------------
-        # FPS DISPLAY
-        # -------------------------------
+        # FPS
         if show_fps:
 
             curr = time.time()
@@ -163,14 +135,25 @@ class VideoProcessor(VideoTransformerBase):
         )
 
 # -------------------------------
-# START WEBRTC STREAM
+# WEBRTC
 # -------------------------------
 webrtc_streamer(
     key="yolo-clean",
+
     video_processor_factory=VideoProcessor,
-    media_stream_constraints={
-        "video": True,
-        "audio": False
+
+    rtc_configuration={
+        "iceServers": token.ice_servers
     },
+
+    media_stream_constraints={
+        "video": {
+            "width": 640,
+            "height": 480,
+            "frameRate": 20,
+        },
+        "audio": False,
+    },
+
     async_processing=True,
 )
